@@ -24,7 +24,7 @@ class BasicCharacterController {
     this._velocity = new THREE.Vector3(0, 0, 0);
 
     this._animations = {};
-    this._inputs = new BasicCharacterControllerInput();
+    this._input = new BasicCharacterControllerInput(); // los eventos de las teclas
     //* Al proxy le pasamos las animaciones
     this._stateMachine = new CharacterFTM(
       new BasicCharacterControllerProxy(this._animations)
@@ -33,7 +33,154 @@ class BasicCharacterController {
   }
 
   _loadModels() {
-    //TODO
+    //cargamos el modelo
+    const loader = new FBXLoader();
+    loader.setPath("./src/paladin/");
+    loader.load("Paladin.fbx", (fbx) => {
+      fbx.scale.setScalar(0.1); //* escalar el modelo siendo 1 el tamaño original
+      //traverse : calculo de sombras
+      fbx.traverse((c) => {
+        c.castShadow = true;
+      });
+
+      this._target = fbx; // vamos a referenciar nuestro modelo
+
+      //ubicar dentro de nuestro escena el elemento
+      this._params.scene.add(this._target); // en los params vamos a guardar la scene, y a la scene le agregamos nuestro recurso
+      // el mixer va a ser el gestor de animacion
+      this._mixer = new THREE.AnimationMixer(this._target);
+
+      //gestionamos el tiempo de carga
+      this._manager = new THREE.LoadingManager();
+      this._manager.onLoad = () => {
+        this._stateMachine.SetState("idle");
+      };
+
+      //ejecutar los diferentes clips de animacion
+      const _OnLoad = (animName, anim) => {
+        const clip = anim.animations[0]; // la primera animacion, la idle, la animacion en si misma
+        const action = this._mixer.clipAction(clip); // la acction de esa animacion
+        this._animations[animName] = {
+          //colocamos el clip y la accion en un objeto asocioado con el nombre del la animacion
+          clip: clip,
+          action: action,
+        };
+      };
+
+      //vamos a meter todos los recursos
+      const loader = new FBXLoader(this._manager);
+      loader.setPath("./src/paladin/");
+      loader.load("idle.fbx", (a) => {
+        _OnLoad("idle", a);
+      });
+
+      loader.load("walk.fbx", (a) => {
+        _OnLoad("walk", a);
+      });
+
+      loader.load("run.fbx", (a) => {
+        _OnLoad("run", a);
+      });
+
+      // loader.load("emote.fbx", (a) => {
+      //   _OnLoad("emote", a);
+      // });
+    });
+  }
+  //metodo update que se va a encargar de calcular de nuestro personaje, que va a ejecutar el bucle dentro de la escena
+  _Update(timeInSeconds) {
+    if (!this._target) {
+      return;
+    }
+
+    this._stateMachine.Update(timeInSeconds, this._input);
+    const velocity = this._velocity;
+    const frameDeceleration = new THREE.Vector2(
+      velocity.x * this._deceleration.x,
+      velocity.y * this._deceleration.y,
+      velocity.z * this._deceleration.z
+    );
+
+    frameDeceleration.multiplyScalar(timeInSeconds); //multiplicamos por un escalar, vector por escalar
+
+    //deceletacion en el eje z, vigilar el valor minimo de deceleracion, ya que es posible que se de el caso que la velocidad en el eje z (eje en donde vamos a estas desplazando al personaje) sea menor que la propia deceleracion | math.sign es para saber si es negativo o positivo la deceleracion
+    frameDeceleration.z =
+      Math.sign(frameDeceleration * z) *
+      Math.min(Math.abs(frameDeceleration.z), Math.abs(velocity.z));
+
+    velocity.add(frameDeceleration); // le agregamos la deceleracion
+
+    //aceletate input: aceleracion para determinar el movimiento dependiendo de los imputs,por ejemplo si damos "w" que acelere hacia adelante
+    //multiply by timeinseconds: para controlar caidas y subidas de frames
+
+    const controlObject = this._target; // gaurdamos nuestro personaje
+    //el vector3 es para el desplazamientp, el quaternion para los calculos de angulo de rotaciones
+    const _Q = new THREE.Quaternion();
+    const _A = new THREE.Vector3();
+    // clonear el quaternion original, la angulacion inicial
+    const _R = controlObject.quaternion.clone();
+    //ahora copiamos aceleracion inicial de nuestro personaje
+    const acc = this._aceleration.clone();
+
+    //tenemos que saber si esta andando o corriendo
+    if (this._input._keys.shift) {
+      acc.multiplyScalar(3.0);
+    }
+
+    if (this._input._keys.forward) {
+      velocity.z += acc.z * timeInSeconds;
+    }
+
+    if (this._input._keys.backward) {
+      velocity.z -= acc.z * timeInSeconds;
+    }
+    //usando los quaternions, giro angular hacia la izquierda y derecha
+    if (this._input._keys.left) {
+      _A.set(0, 1, 0);
+      // establecemos el angulo que vamos a estar aplicando
+      _Q.setFromAxisAngle(
+        _A,
+        4.0 * Math.PI * timeInSeconds * this._aceleration.y
+      );
+      _R.multiply(_Q);
+    }
+    if (this._input._keys.right) {
+      _A.set(0, 1, 0);
+      _Q.setFromAxisAngle(
+        _A,
+        4.0 * -Math.PI * timeInSeconds * this._aceleration.y
+      ); //solo que de valor contrario que el izquierdo
+      _R.multiply(_Q);
+    }
+
+    controlObject.quaternion.copy(_R);
+
+    const oldPostiion = new THREE.Vector3();
+    oldPostiion.copy(controlObject.position); //copiamos la posicion del personaje
+
+    const forward = new THREE.Vector3(0, 0, 1); //los valores que tienen que tener en funcion del desplazamiento horizontal que esta tomando
+    forward.applyQuaternion(controlObject.quaternion); //gestionamos la rotacion
+
+    //! cuando nosotros estamos pulsando una tecla, estamos proporcionando una aceleracion, como el eje z, pero que pasa si toco la tecla de giro y adelante al mismo tiempo, las aceleraciones se van a sumar y se van a volver el doble de rapido, hay que evitar eso, tenemos que hacer que el movimiento sea constante
+    forward.normalize();
+
+    //ahora los giros
+    const sideways = new THREE.Vector3(1, 0, 0);
+    sideways.applyQuaternion(controlObject.quaternion);
+    sideways.normalize();
+
+    //ahora ese vector que esta normalizado multiplicarlo por la velocidad que queremos y por el tiempo para evitar la caida de frames
+    sideways.multiplyScalar(velocity.x * timeInSeconds);
+    forward.multiplyScalar(velocity.z * timeInSeconds);
+
+    controlObject.position.add(forward);
+    controlObject.position.add(sideways);
+
+    oldPostiion.copy(controlObject.position);
+    //actualizar en nuestro mixer la informacion para que aplique a la animacion correspondiente
+    if (this._mixer) {
+      this._mixer.update(timeInSeconds);
+    }
   }
 }
 
