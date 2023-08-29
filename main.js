@@ -1,7 +1,7 @@
 //? import libraries
-import * as THREE from "https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js";
-import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three-fbx-loader@1.0.3/index.min.js";
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.118/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.118/examples/jsm/controls/OrbitControls.js";
+import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.118.1/examples/jsm/loaders/FBXLoader.js";
 //?  Character Proxy :clase que se encargue de gestionar las animaciones de nuestro personaje, recibir a todas a las animaciones en su constructor y un getter que va a devolver las animaciones
 
 class BasicCharacterControllerProxy {
@@ -19,14 +19,14 @@ class BasicCharacterControllerProxy {
 class BasicCharacterController {
   constructor(params) {
     this._params = params;
-    this._deceleration = new THREE.Vector3(-0.005, -0.0001, -5.0);
+    this._deceleration = new THREE.Vector3(-0.0005, -0.0001, -5.0);
     this._aceleration = new THREE.Vector3(1, 0.25, 50.0);
     this._velocity = new THREE.Vector3(0, 0, 0);
 
     this._animations = {};
     this._input = new BasicCharacterControllerInput(); // los eventos de las teclas
     //* Al proxy le pasamos las animaciones
-    this._stateMachine = new CharacterFTM(
+    this._stateMachine = new CharacterFSM(
       new BasicCharacterControllerProxy(this._animations)
     );
     this._loadModels();
@@ -93,9 +93,9 @@ class BasicCharacterController {
       return;
     }
 
-    this._stateMachine.Update(timeInSeconds, this._input);
+    this._stateMachine.UpdateState(timeInSeconds, this._input); //TODO
     const velocity = this._velocity;
-    const frameDeceleration = new THREE.Vector2(
+    const frameDeceleration = new THREE.Vector3(
       velocity.x * this._deceleration.x,
       velocity.y * this._deceleration.y,
       velocity.z * this._deceleration.z
@@ -105,7 +105,7 @@ class BasicCharacterController {
 
     //deceletacion en el eje z, vigilar el valor minimo de deceleracion, ya que es posible que se de el caso que la velocidad en el eje z (eje en donde vamos a estas desplazando al personaje) sea menor que la propia deceleracion | math.sign es para saber si es negativo o positivo la deceleracion
     frameDeceleration.z =
-      Math.sign(frameDeceleration * z) *
+      Math.sign(frameDeceleration.z) *
       Math.min(Math.abs(frameDeceleration.z), Math.abs(velocity.z));
 
     velocity.add(frameDeceleration); // le agregamos la deceleracion
@@ -187,7 +187,6 @@ class BasicCharacterController {
 //? Character input:clase para los diferente input que pueden modificar el estado del personaje como correr,andar,etc
 
 class BasicCharacterControllerInput {
-  //TODO
   constructor() {
     this._keys = {
       forward: false,
@@ -289,7 +288,7 @@ class FiniteStateMachine {
 
 //Character State Machine
 
-class CharacterFTM extends FiniteStateMachine {
+class CharacterFSM extends FiniteStateMachine {
   constructor(proxy) {
     super();
     this._proxy = proxy;
@@ -307,17 +306,11 @@ class State {
     this._parent = parent;
   }
 
-  Enter() {
-    //TODO
-  }
+  Enter() {}
 
-  Exit() {
-    //TODO
-  }
+  Exit() {}
 
-  Update() {
-    //TODO
-  }
+  Update() {}
 }
 
 class IdleState extends State {
@@ -335,7 +328,7 @@ class IdleState extends State {
     if (prevState) {
       const prevAction = this._parent._proxy._animations[prevState.Name].action; //tenemos que tener en cuenta el estado anterior para hacer la  transicion de un estado al otro
       idleAction.time = 0.0; // a la accion el tiempo lo vamos estar estableciendo a 0
-      idleAction.enable = true; //vamos a habilitar a la action
+      idleAction.enabled = true; //vamos a habilitar a la action
       idleAction.setEffectiveTimeScale(1.0); //no vamos a duplicar la velocidad
       idleAction.setEffectiveWeight(1.0); //vamos a dejarle el peso por defecto
       idleAction.crossFadeFrom(prevAction, 0.5, true); //establecer la transicion entre el estado anterior y el actual
@@ -345,9 +338,7 @@ class IdleState extends State {
     }
   }
 
-  Exit() {
-    // TODO
-  }
+  Exit() {}
 
   Update(_, input) {
     if (input._keys.forward || input._keys.backward) {
@@ -369,7 +360,7 @@ class WalkState extends State {
     const currAction = this._parent._proxy._animations["walk"].action;
     if (prevState) {
       const prevAction = this._parent._proxy._animations[prevState.Name].action;
-      currAction.enable = true;
+      currAction.enabled = true;
 
       if (prevState.Name === "run") {
         //el ratio de nuestra duracion, para aplixar al time, y corregir nuestro suavizador
@@ -415,7 +406,7 @@ class RunState extends State {
     const currAction = this._parent._proxy._animations["run"].action;
     if (prevState) {
       const prevAction = this._parent._proxy._animations[prevState.Name].action;
-      currAction.enable = true;
+      currAction.enabled = true;
 
       if (prevState.Name === "walk") {
         //el ratio de nuestra duracion, para aplixar al time, y corregir nuestro suavizador
@@ -453,3 +444,112 @@ class EmoteState extends State {
 }
 
 //Scene: clase donde se encuentra la escena del personaje
+class DemoScene {
+  constructor() {
+    this._threejs = new THREE.WebGLRenderer({ antialias: true });
+    this._threejs.outputEncoding = THREE.sRGBEncoding; //el encoding de color
+    this._threejs.shadowMap.enabled = true;
+    this._threejs.shadowMap.type = THREE.PCFSoftShadowMap; //sombras suaves
+    this._threejs.setPixelRatio(window.devicePixelRatio);
+    this._threejs.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(this._threejs.domElement);
+
+    window.addEventListener(
+      "resize",
+      () => {
+        this._OnWindowResize();
+      },
+      false
+    );
+
+    this._camera = new THREE.PerspectiveCamera(60, 1920 / 1080, 1.0, 1000);
+    this._camera.position.set(25, 10, 25);
+
+    this._scene = new THREE.Scene();
+
+    let light = new THREE.DirectionalLight(0xffffff, 1.0);
+    light.position.set(-100, 100, 100);
+    light.target.position.set(0, 0, 0);
+    light.castShadow = true;
+    light.shadow.bias = -0.001;
+    light.shadow.mapSize.width = 4096;
+    light.shadow.mapSize.height = 4096;
+    light.shadow.camera.near = 0.1;
+    light.shadow.camera.far = 500.0;
+    light.shadow.camera.near = 0.5;
+    light.shadow.camera.far = 500.0;
+    light.shadow.camera.left = 50;
+    light.shadow.camera.right = -50;
+    light.shadow.camera.top = 50;
+    light.shadow.camera.bottom = -50;
+    this._scene.add(light);
+
+    light = new THREE.AmbientLight(0xffffffff, 0.25);
+    this._scene.add(light);
+
+    const controls = new OrbitControls(this._camera, this._threejs.domElement);
+    controls.target.set(0, 10, 0);
+    controls.update();
+
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(100, 100, 10, 10),
+      new THREE.MeshStandardMaterial({ color: 0x808080 })
+    );
+    plane.castShadow = false;
+    plane.receiveShadow = true;
+    plane.rotation.x = -Math.PI / 2;
+    this._scene.add(plane);
+    // podemos preparar para ir utilizando las clases del character controler
+    this._mixers = [];
+    this._previousRAF = null; //previous request aspect frame, para guardar registro de a cuantos frames de estaba ejecutando el sistema
+    this._LoadAnimatedModels(); //cargamos el modelo
+    this._RAF();
+  }
+
+  _OnWindowResize() {
+    this._camera.aspect = window.innerWidth / window.innerHeight;
+    this._camera.updateProjectionMatrix();
+    this._threejs.setSize(window.innerWidth, window.innerHeight);
+  }
+  //cosntruccion de nuestro modelo animado
+  _LoadAnimatedModels() {
+    const params = {
+      camera: this._camera,
+      scene: this._scene,
+    };
+    this._controls = new BasicCharacterController(params);
+  }
+
+  _RAF() {
+    requestAnimationFrame((t) => {
+      if (this._previousRAF === null) {
+        this._previousRAF = t;
+      }
+
+      this._RAF();
+
+      this._threejs.render(this._scene, this._camera);
+      //vamos a controlar el renderizado de la escena, en lugar de dejar que el update ejecute los pasos
+      this._Step(t - this._previousRAF); //gestion del tiempo que ha ocurrido menos el previo
+      this._previousRAF = t;
+    });
+  }
+
+  _Step(timeElapsed) {
+    const time = timeElapsed * 0.001; //para mantener el control del tiempo y pasar a milisegundo
+    //para posteriormente a nuestro mixer vamos a agragarle el mapeado de los diferennte elementos
+    if (this._mixers) {
+      this._mixers.map((m) => m.update(time));
+    }
+
+    if (this._controls) {
+      this._controls._Update(time);
+    }
+  }
+}
+
+let _App = null;
+
+window.addEventListener("DOMContentLoaded", () => {
+  _App = new DemoScene();
+});
