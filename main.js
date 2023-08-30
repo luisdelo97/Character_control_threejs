@@ -483,9 +483,18 @@ class DemoScene {
     light.shadow.camera.top = 50;
     light.shadow.camera.bottom = -50;
     this._scene.add(light);
+    //sirve para ver donde esta emitiendo la luz
+    const dLightHelper = new THREE.DirectionalLightHelper(light);
+    this._scene.add(dLightHelper);
+
+    const dLightShadowHelper = new THREE.CameraHelper(light.shadow.camera);
+    this._scene.add(dLightShadowHelper);
 
     light = new THREE.AmbientLight(0xffffffff, 0.25);
     this._scene.add(light);
+    //sirve para ver los ejes x y z
+    const axisHelper = new THREE.AxisHelper(50);
+    this._scene.add(axisHelper);
 
     const controls = new OrbitControls(this._camera, this._threejs.domElement);
     controls.target.set(0, 10, 0);
